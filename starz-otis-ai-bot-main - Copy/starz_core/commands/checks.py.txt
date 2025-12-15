@@ -1,9 +1,0 @@
-from __future__ import annotations
-import discord
-from config_starz import AI_CONTROL_ROLES
-
-
-def require_ai_control(interaction: discord.Interaction) -> bool:
-    if not isinstance(interaction.user, discord.Member):
-        return False
-    return any(r.id in AI_CONTROL_ROLES for r in interaction.user.roles)
