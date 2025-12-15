@@ -1,0 +1,74 @@
+# starz_core/rcon/playerlist_poll.py
+from __future__ import annotations
+
+import asyncio
+from typing import Iterable
+
+PLAYERLIST_INTERVAL_SECONDS = 12  # 10–20s is fine
+
+_started: bool = False
+
+
+def _get_run_rcon_command():
+    """
+    Returns the run_rcon_command function from wherever it currently lives.
+    """
+    # If you moved it into starz_core already
+    try:
+        from starz_core.rcon.rcon_web import run_rcon_command  # type: ignore
+        return run_rcon_command
+    except Exception:
+        pass
+
+    # Current canonical (root-level) file
+    try:
+        from rcon_web import run_rcon_command  # type: ignore
+        return run_rcon_command
+    except Exception:
+        pass
+
+    # Fallback if you named it differently
+    try:
+        from rcon import run_rcon_command  # type: ignore
+        return run_rcon_command
+    except Exception as e:
+        raise RuntimeError("Could not import run_rcon_command from any known module") from e
+
+
+async def start_playerlist_polling(server_keys: Iterable[str]) -> None:
+    """
+    Starts a single background task that polls `playerlist` for each server.
+    Safe to call multiple times; it will only start once.
+    """
+    global _started
+    if _started:
+        print("[PLAYERLIST] Already started; skipping.")
+        return
+    _started = True
+
+    keys = [str(k) for k in server_keys]
+    if not keys:
+        print("[PLAYERLIST] No server keys provided; polling not started.")
+        return
+
+    run_rcon_command = _get_run_rcon_command()
+
+    print(f"[PLAYERLIST] Polling enabled for {len(keys)} servers every {PLAYERLIST_INTERVAL_SECONDS}s")
+
+    async def loop() -> None:
+        # small initial delay so bot startup isn’t a burst
+        await asyncio.sleep(2.0)
+
+        while True:
+            for sk in keys:
+                try:
+                    await run_rcon_command("playerlist", client_key=sk)
+                except Exception as e:
+                    print(f"[PLAYERLIST] {sk} error: {e}")
+
+                # small gap between servers so we don’t spike RCON
+                await asyncio.sleep(0.20)
+
+            await asyncio.sleep(PLAYERLIST_INTERVAL_SECONDS)
+
+    asyncio.create_task(loop(), name="playerlist_poll_loop")

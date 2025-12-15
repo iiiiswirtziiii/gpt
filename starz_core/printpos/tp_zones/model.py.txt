@@ -1,0 +1,48 @@
+# starz_core/printpos/tp_zones/model.py
+from __future__ import annotations
+
+from dataclasses import dataclass, asdict
+from typing import Any, Dict, List, Tuple
+
+
+@dataclass
+class TpZone:
+    tp_type: str
+    slot: int
+
+    zone_x: float
+    zone_y: float
+    zone_z: float
+
+    radius: float
+    color: str
+
+    spawns: List[Tuple[float, float, float]]
+
+    def to_dict(self) -> Dict[str, Any]:
+        d = asdict(self)
+        # JSON needs list, not tuples
+        d["spawns"] = [[x, y, z] for (x, y, z) in self.spawns]
+        return d
+
+    @staticmethod
+    def from_dict(d: Dict[str, Any]) -> "TpZone":
+        sp = d.get("spawns") or []
+        spawns = []
+        for item in sp:
+            try:
+                x, y, z = float(item[0]), float(item[1]), float(item[2])
+                spawns.append((x, y, z))
+            except Exception:
+                continue
+
+        return TpZone(
+            tp_type=str(d.get("tp_type") or ""),
+            slot=int(d.get("slot") or 1),
+            zone_x=float(d.get("zone_x") or 0.0),
+            zone_y=float(d.get("zone_y") or 0.0),
+            zone_z=float(d.get("zone_z") or 0.0),
+            radius=float(d.get("radius") or 2.0),
+            color=str(d.get("color") or "#FF0000"),
+            spawns=spawns,
+        )

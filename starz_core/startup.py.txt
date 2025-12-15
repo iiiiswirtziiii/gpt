@@ -1,0 +1,70 @@
+from __future__ import annotations
+
+import os
+from datetime import datetime, timezone
+from typing import List, Tuple
+
+import discord
+
+
+def run_startup_checks() -> tuple[bool, list[str]]:
+    """
+    Returns: (ok, failures)
+    This should never raise—only report.
+    """
+    failures: List[str] = []
+
+    # env checks
+    required_env = ["DISCORD_BOT_TOKEN", "OPENAI_API_KEY", "OPENAI_MODEL"]
+    for k in required_env:
+        if not (os.getenv(k) or "").strip():
+            failures.append(f"Missing env var: {k}")
+
+    # file checks (optional; add more as you modularize)
+    required_files = [
+        "config_starz.py",
+    ]
+    for f in required_files:
+        if not os.path.exists(f):
+            failures.append(f"Missing file: {f}")
+
+    ok = len(failures) == 0
+    return ok, failures
+
+
+async def send_startup_embed(
+    bot: discord.Client,
+    ok: bool,
+    failures: list[str],
+    *,
+    channel_id: int,
+) -> None:
+    """
+    Sends a single startup embed to channel_id.
+    """
+    ch = bot.get_channel(channel_id)
+    if not isinstance(ch, discord.TextChannel):
+        print(f"[STARTUP] Channel not found / not text: {channel_id}")
+        return
+
+    color = 0x2ECC71 if ok else 0xE74C3C
+    title = "✅ STARZ Otis Startup OK" if ok else "❌ STARZ Otis Startup Issues"
+    embed = discord.Embed(
+        title=title,
+        color=color,
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    if ok:
+        embed.description = "All startup checks passed."
+    else:
+        embed.description = "\n".join(f"• {x}" for x in failures[:20])
+        if len(failures) > 20:
+            embed.description += f"\n… and {len(failures) - 20} more."
+
+    try:
+        embed.set_thumbnail(url=bot.user.display_avatar.url)  # type: ignore
+    except Exception:
+        pass
+
+    await ch.send(embed=embed)

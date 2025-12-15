@@ -1,0 +1,54 @@
+# starz_core/printpos/tp_zones/storage.py
+from __future__ import annotations
+
+import json
+import os
+from typing import Dict, List, Tuple
+
+from .model import TpZone
+
+
+def _data_dir() -> str:
+    # Railway-friendly: set STARZ_DATA_DIR=/app/data
+    # local-friendly: default to ./data
+    return os.getenv("STARZ_DATA_DIR", "data")
+
+
+def zones_path() -> str:
+    return os.path.join(_data_dir(), "tp_zones.json")
+
+
+def load_zones() -> List[TpZone]:
+    path = zones_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    if not os.path.exists(path):
+        return []
+
+    with open(path, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+
+    items = raw.get("zones") if isinstance(raw, dict) else raw
+    if not isinstance(items, list):
+        return []
+
+    zones: List[TpZone] = []
+    for d in items:
+        if isinstance(d, dict):
+            zones.append(TpZone.from_dict(d))
+    return zones
+
+
+def save_zones(zones: List[TpZone]) -> None:
+    path = zones_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    payload = {"zones": [z.to_dict() for z in zones]}
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    os.replace(tmp, path)
+
+
+def index_by_type_slot(zones: List[TpZone]) -> Dict[Tuple[str, int], TpZone]:
+    return {(z.tp_type, z.slot): z for z in zones}

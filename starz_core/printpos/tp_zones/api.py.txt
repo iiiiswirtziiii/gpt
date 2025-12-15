@@ -1,0 +1,114 @@
+# starz_core/printpos/tp_zones/api.py
+from __future__ import annotations
+
+from typing import List, Tuple, Optional, Set, Dict
+
+from .model import TpZone
+from .parse import parse_xyz
+from .storage import load_zones, save_zones, index_by_type_slot
+from .builder import build_zone_commands, build_zone_name, DEFAULT_RADIUS, DEFAULT_ZONE_COLORS
+
+
+# Simple in-memory cache (reloaded on write)
+_ZONES: List[TpZone] = []
+
+
+def _ensure_loaded() -> None:
+    global _ZONES
+    if not _ZONES:
+        _ZONES = load_zones()
+
+
+def get_all_zones() -> List[TpZone]:
+    _ensure_loaded()
+    return list(_ZONES)
+
+
+def upsert_zone_and_save(
+    *,
+    tp_type: str,
+    zone_x: float,
+    zone_y: float,
+    zone_z: float,
+    spawns: List[str],
+    slot: int = 1,
+    radius: Optional[float] = None,
+    color: Optional[str] = None,
+) -> Tuple[str, List[str]]:
+    """
+    Upserts (tp_type, slot) zone in tp_zones.json and returns:
+      (zone_name, created_main_cmds)
+    """
+    global _ZONES
+    _ensure_loaded()
+
+    sp_tuples = [parse_xyz(s) for s in spawns]
+
+    r = float(radius) if radius is not None else DEFAULT_RADIUS
+    c = str(color) if color is not None else DEFAULT_ZONE_COLORS.get(tp_type, "#FF0000")
+
+    idx = index_by_type_slot(_ZONES)
+    key = (tp_type, int(slot))
+
+    if key in idx:
+        z = idx[key]
+        z.zone_x = float(zone_x)
+        z.zone_y = float(zone_y)
+        z.zone_z = float(zone_z)
+        z.spawns = sp_tuples
+        z.radius = r
+        z.color = c
+    else:
+        _ZONES.append(
+            TpZone(
+                tp_type=str(tp_type),
+                slot=int(slot),
+                zone_x=float(zone_x),
+                zone_y=float(zone_y),
+                zone_z=float(zone_z),
+                radius=r,
+                color=c,
+                spawns=sp_tuples,
+            )
+        )
+
+    # Save + refresh cache from disk to keep things consistent
+    save_zones(_ZONES)
+    _ZONES = load_zones()
+
+    zone_name = build_zone_name(tp_type, int(slot))
+
+    # Build RCON zone commands for this zone
+    zone_obj = index_by_type_slot(_ZONES)[(tp_type, int(slot))]
+    cmds = build_zone_commands(zone_obj)
+
+    return zone_name, cmds
+
+def list_zone_summaries() -> List[str]:
+    _ensure_loaded()
+    lines: List[str] = []
+    for z in sorted(_ZONES, key=lambda a: (a.tp_type, a.slot)):
+        lines.append(
+            f"{z.tp_type} slot {z.slot} @ ({z.zone_x:.2f},{z.zone_y:.2f},{z.zone_z:.2f}) "
+            f"spawns={len(z.spawns)} radius={z.radius:.2f}"
+        )
+    return lines
+
+
+def remove_zone_and_save(*, tp_type: str, slot: int = 1) -> str:
+    global _ZONES
+    _ensure_loaded()
+
+    before = len(_ZONES)
+    _ZONES = [z for z in _ZONES if not (z.tp_type == tp_type and z.slot == int(slot))]
+    after = len(_ZONES)
+
+    save_zones(_ZONES)
+    _ZONES = load_zones()
+
+    if after == before:
+        raise ValueError(f"No zone found for tp_type={tp_type!r} slot={slot}")
+
+    from .builder import build_zone_name
+    return build_zone_name(tp_type, int(slot))
+

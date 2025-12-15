@@ -1,0 +1,58 @@
+# starz_core/printpos/tp_zones/builder.py
+from __future__ import annotations
+
+from typing import List
+
+from .model import TpZone
+
+
+DEFAULT_RADIUS = 2.0
+
+# Try to use your canonical colors map if present
+try:
+    from starz_printpos.tp_zones import DEFAULT_ZONE_COLORS  # type: ignore
+except Exception:
+    DEFAULT_ZONE_COLORS = {
+        "launch": "#FF0000",
+        "airfield": "#00FFFF",
+        "harbor": "#00FF00",
+        "trainyard": "#FFA500",
+        "junkyard": "#FF00FF",
+        "powerplant": "#FFFF00",
+        "watertreatment": "#00AAFF",
+        "outpost": "#FFFFFF",
+        "bandit": "#CCCCCC",
+    }
+
+
+def build_zone_name(tp_type: str, slot: int) -> str:
+    # stable + predictable
+    return f"STARZ_TP_{tp_type.upper()}_{slot}"
+
+
+def build_zone_commands(zone: TpZone) -> List[str]:
+    """
+    Returns the list of RCON commands to create/update the zone on the server.
+
+    NOTE: Different Rust "zones" plugins vary. We keep this generic:
+      - delete existing zone name (safe if plugin supports it)
+      - createcustomzone with position + radius + color
+    """
+    zone_name = build_zone_name(zone.tp_type, zone.slot)
+
+    x, y, z = zone.zone_x, zone.zone_y, zone.zone_z
+    r = zone.radius or DEFAULT_RADIUS
+    color = zone.color or DEFAULT_ZONE_COLORS.get(zone.tp_type, "#FF0000")
+
+    cmds: List[str] = []
+
+    # Safe-ish cleanup first (many zones plugins support delete)
+    cmds.append(f'zones.remove "{zone_name}"')
+
+    # Create the zone
+    # If your plugin syntax differs, we’ll adjust here once you confirm the exact zones plugin.
+    cmds.append(
+        f'zones.createcustomzone "{zone_name}" {x:.2f} {y:.2f} {z:.2f} {r:.2f} "{color}"'
+    )
+
+    return cmds

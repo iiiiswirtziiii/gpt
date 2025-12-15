@@ -1,0 +1,11 @@
+# starz_core/commands/misc.py
+from __future__ import annotations
+
+import discord
+from discord import app_commands
+
+
+def register_commands(tree: app_commands.CommandTree):
+    @tree.command(name="ping", description="Check if the bot is alive.")
+    async def ping(interaction: discord.Interaction):
+        await interaction.response.send_message("✅ Pong!", ephemeral=True)
