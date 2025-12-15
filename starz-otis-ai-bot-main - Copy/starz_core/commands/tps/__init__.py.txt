@@ -1,0 +1,17 @@
+# starz_core/commands/tps/__init__.py
+from __future__ import annotations
+
+from discord.ext import commands
+
+from .tp_admin import setup as setup_tp_admin
+from .zones import setup as setup_tps_zones
+
+
+def setup(bot: commands.Bot) -> None:
+    """
+    TPS command package entrypoint.
+    Called by starz_core.commands.load_all_commands(bot).
+    """
+    setup_tp_admin(bot)
+    setup_tps_zones(bot)
+    print("[COMMANDS] Loaded TPS commands")

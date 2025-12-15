@@ -1,0 +1,189 @@
+# starz_core/commands/tps/zones/zone_push.py
+from __future__ import annotations
+
+import discord
+from discord import app_commands
+from discord.ext import commands
+
+from config_starz import AI_CONTROL_ROLES
+
+
+def _has_ai_control(member: discord.Member) -> bool:
+    allowed = set(AI_CONTROL_ROLES)
+    roles = getattr(member, "roles", []) or []
+    return any(getattr(r, "id", None) in allowed for r in roles)
+
+
+def _import_tp_zones_module():
+    """
+    Import the canonical tp_zones module from wherever it currently lives.
+    """
+    try:
+        import starz_core.printpos.tp_zones as tz  # type: ignore
+        return tz
+    except Exception:
+        import starz_printpos.tp_zones as tz  # type: ignore
+        return tz
+
+
+def _get_zone_cmd_builder():
+    """
+    We do NOT hardcode Rust 'zones.*' syntax here.
+
+    We look for an existing function in your tp_zones module that returns a list[str]
+    of zone setup commands for ONE zone object.
+
+    We try lots of possible names (because your old monolith likely used a different one).
+    """
+    tz = _import_tp_zones_module()
+
+    # Most likely names first
+    candidate_names = [
+        "build_zone_rcon_cmds",
+        "build_zone_setup_cmds",
+        "get_zone_setup_cmds",
+        "zone_setup_cmds",
+        "zone_setup_commands",
+        "build_zone_commands",
+        "build_zone_cmds",
+        "get_zone_cmds",
+        "get_zone_commands",
+        "make_zone_cmds",
+        "make_zone_commands",
+        "create_zone_cmds",
+        "create_zone_commands",
+        "_build_zone_setup_cmds",
+        "_get_zone_setup_cmds",
+    ]
+
+    for name in candidate_names:
+        fn = getattr(tz, name, None)
+        if callable(fn):
+            return fn, name
+
+    # If not found, show helpful candidates so you can tell me what it is
+    helpful = []
+    for attr in dir(tz):
+        if "zone" in attr.lower() and ("cmd" in attr.lower() or "command" in attr.lower()):
+            obj = getattr(tz, attr, None)
+            if callable(obj):
+                helpful.append(attr)
+
+    raise RuntimeError(
+        "tp_zones has no recognized command builder function.\n"
+        "Expected something like build_zone_setup_cmds(zone)->list[str].\n"
+        f"Callable candidates found: {helpful if helpful else 'none'}"
+    )
+
+
+async def _rcon_send_all(cmd: str) -> None:
+    """
+    Use your canonical broadcast helper (root rcon_web.py).
+    """
+    try:
+        from rcon_web import rcon_send_all  # type: ignore
+    except Exception as e:
+        raise RuntimeError(f"Could not import rcon_send_all from rcon_web.py: {e}") from e
+
+    await rcon_send_all(cmd)
+
+
+@app_commands.command(
+    name="tp-push-zones",
+    description="Push saved TP zones to servers (sends Rust zones.* commands over RCON). AI Control only.",
+)
+@app_commands.describe(dry_run="If true, just show how many commands would be sent (no RCON sends).")
+async def tp_push_zones(interaction: discord.Interaction, dry_run: bool = True) -> None:
+    # Permission gate
+    if not isinstance(interaction.user, discord.Member) or not _has_ai_control(interaction.user):
+        await interaction.response.send_message("❌ You do not have permission to push TP zones.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    # Load zones
+    try:
+        try:
+            from starz_core.printpos.tp_zones import get_all_zones  # if moved later
+        except Exception:
+            from starz_printpos.tp_zones import get_all_zones  # canonical now
+    except Exception as e:
+        await interaction.followup.send(f"❌ Could not import get_all_zones: {e}", ephemeral=True)
+        return
+
+    try:
+        zones = list(get_all_zones())
+    except Exception as e:
+        await interaction.followup.send(f"❌ Failed to load zones: {e}", ephemeral=True)
+        return
+
+    if not zones:
+        await interaction.followup.send("ℹ️ No TP zones saved yet. Use /tp-set-zone first.", ephemeral=True)
+        return
+
+    # Get builder that returns list[str] for a single zone
+    try:
+        build_cmds_for_zone, builder_name = _get_zone_cmd_builder()
+    except Exception as e:
+        await interaction.followup.send(f"❌ Cannot build zone commands: {e}", ephemeral=True)
+        return
+
+    # Build all commands
+    all_cmds: list[str] = []
+    built_for = 0
+    skipped = 0
+
+    for z in zones:
+        try:
+            cmds = list(build_cmds_for_zone(z))  # must be iterable[str]
+            cmds = [c.strip() for c in cmds if isinstance(c, str) and c.strip()]
+            if cmds:
+                all_cmds.extend(cmds)
+                built_for += 1
+            else:
+                skipped += 1
+        except Exception:
+            skipped += 1
+            continue
+
+    if not all_cmds:
+        await interaction.followup.send(
+            "⚠️ Zones loaded, but no RCON commands were produced.\n"
+            f"Builder used: `{builder_name}`\n"
+            "This usually means your builder is returning empty output for these zone objects.",
+            ephemeral=True,
+        )
+        return
+
+    if dry_run:
+        await interaction.followup.send(
+            f"🧪 **Dry run**\n"
+            f"Builder: `{builder_name}`\n"
+            f"Zones loaded: `{len(zones)}` | Zones built: `{built_for}` | Skipped: `{skipped}`\n"
+            f"Total `zones.*` commands to send: **{len(all_cmds)}**\n"
+            "Run again with `dry_run:false` to actually send.",
+            ephemeral=True,
+        )
+        return
+
+    # Send commands (broadcast per command)
+    sent = 0
+    failed = 0
+    for cmd in all_cmds:
+        try:
+            await _rcon_send_all(cmd)
+            sent += 1
+        except Exception:
+            failed += 1
+
+    await interaction.followup.send(
+        f"✅ Pushed zones.\n"
+        f"Builder: `{builder_name}`\n"
+        f"Zones loaded: `{len(zones)}` | Zones built: `{built_for}` | Skipped: `{skipped}`\n"
+        f"Commands sent: `{sent}` | Failed: `{failed}`",
+        ephemeral=True,
+    )
+
+
+def setup(bot: commands.Bot) -> None:
+    bot.tree.add_command(tp_push_zones)

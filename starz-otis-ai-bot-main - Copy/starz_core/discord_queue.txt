@@ -1,0 +1,63 @@
+# starz_core/discord_queue.py
+"""
+Centralized Discord send queue to prevent 429 rate-limit spam.
+
+Usage:
+    from starz_core.discord_queue import start_discord_queue, qsend
+    start_discord_queue()  # call once on_ready
+    await qsend(lambda: channel.send(embed=embed))
+"""
+
+from __future__ import annotations
+
+import asyncio
+import traceback
+from typing import Any, Awaitable, Callable
+
+_DISCORD_SEND_QUEUE: asyncio.Queue = asyncio.Queue()
+_WORKER_STARTED: bool = False
+
+
+async def _discord_send_worker() -> None:
+    while True:
+        coro_factory, fut = await _DISCORD_SEND_QUEUE.get()
+        try:
+            res = await coro_factory()
+            if not fut.done():
+                fut.set_result(res)
+        except Exception:
+            if not fut.done():
+                fut.set_exception(Exception("Discord queued send failed"))
+            print("[DISCORD-QUEUE] Send failed:")
+            traceback.print_exc()
+        finally:
+            _DISCORD_SEND_QUEUE.task_done()
+            # gentle pacing to avoid bursts
+            await asyncio.sleep(0.25)
+
+
+def start_discord_queue(loop: asyncio.AbstractEventLoop | None = None) -> None:
+    """
+    Starts the worker once. Safe to call multiple times.
+    """
+    global _WORKER_STARTED
+    if _WORKER_STARTED:
+        return
+
+    if loop is None:
+        loop = asyncio.get_event_loop()
+
+    loop.create_task(_discord_send_worker())
+    _WORKER_STARTED = True
+    print("[DISCORD-QUEUE] Worker started.")
+
+
+async def qsend(coro_factory: Callable[[], Awaitable[Any]]) -> Any:
+    """
+    Queue any discord send/edit so we don't blast the API and trigger constant 429s.
+    Usage: await qsend(lambda: channel.send(...))
+    """
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+    await _DISCORD_SEND_QUEUE.put((coro_factory, fut))
+    return await fut

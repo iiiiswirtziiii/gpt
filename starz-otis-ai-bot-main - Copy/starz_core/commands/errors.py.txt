@@ -1,0 +1,19 @@
+from __future__ import annotations
+import discord
+from discord import app_commands
+
+
+async def on_app_command_error(
+    interaction: discord.Interaction,
+    error: app_commands.AppCommandError,
+):
+    msg = f"❌ Command error: `{type(error).__name__}`"
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+    except Exception:
+        pass
+
+    print(f"[CMD-ERROR] {error}")

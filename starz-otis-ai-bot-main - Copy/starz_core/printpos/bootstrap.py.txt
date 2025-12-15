@@ -1,0 +1,42 @@
+# starz_core/printpos/bootstrap.py
+from __future__ import annotations
+
+import discord
+
+# one-time boot guard (prevents double-start if called twice)
+_started: bool = False
+
+
+async def start_printpos_system(bot: discord.Client) -> None:
+    """
+    Initializes PrintPos with a unified RCON send function and starts the polling loop.
+    Uses your canonical tracker: starz_printpos/tp_tracker.py
+    """
+    global _started
+    if _started:
+        print("[STARZ-PRINTPOS] Already started; skipping.")
+        return
+    _started = True
+
+    # Prefer refactored rcon_web location, fall back to your current root file
+    try:
+        from starz_core.rcon.rcon_web import run_rcon_command as _run  # type: ignore
+    except Exception:
+        from rcon_web import run_rcon_command as _run  # type: ignore
+
+    async def send_rcon(server_key: str, cmd: str):
+        """
+        tp_tracker expects: (server_key, cmd) -> str|None
+        We'll use run_rcon_command and return resp["Message"] if present.
+        """
+        resp = await _run(cmd, client_key=server_key)
+        if not resp:
+            return None
+        msg = (resp.get("Message") or "").strip()
+        return msg or None
+
+    from starz_printpos.tp_tracker import init_printpos_system, start_printpos_polling
+
+    init_printpos_system(send_rcon)
+    start_printpos_polling()
+    print("[STARZ-PRINTPOS] PrintPos system started")

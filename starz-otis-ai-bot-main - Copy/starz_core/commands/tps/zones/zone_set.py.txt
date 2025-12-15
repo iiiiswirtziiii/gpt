@@ -1,0 +1,131 @@
+# starz_core/commands/tps/zones/zone_set.py
+from __future__ import annotations
+
+import discord
+from discord import app_commands
+from discord.ext import commands
+
+from config_starz import AI_CONTROL_ROLES
+
+
+# Keep choices simple for now; expand later
+TP_TYPE_CHOICES = [
+    app_commands.Choice(name="Airfield", value="airfield"),
+    app_commands.Choice(name="Launch Site", value="launch"),
+    app_commands.Choice(name="Outpost", value="outpost"),
+    app_commands.Choice(name="Bandit Camp", value="bandit"),
+    app_commands.Choice(name="Junkyard", value="junkyard"),
+    app_commands.Choice(name="Harbor", value="harbor"),
+    app_commands.Choice(name="Train Yard", value="trainyard"),
+    app_commands.Choice(name="Water Treatment", value="watertreatment"),
+]
+
+
+def _has_ai_control(member: discord.Member) -> bool:
+    allowed = set(AI_CONTROL_ROLES)
+    roles = getattr(member, "roles", []) or []
+    return any(getattr(r, "id", None) in allowed for r in roles)
+
+
+@app_commands.command(
+    name="tp-set-zone",
+    description="Create/update a TP trigger zone and its teleport spawn(s). AI Control only.",
+)
+@app_commands.describe(
+    tp_type="Which monument/type this zone belongs to",
+    slot="Slot number for this type (1-5). Lets you have multiple per type.",
+    zone_x="Zone center X",
+    zone_y="Zone center Y",
+    zone_z="Zone center Z",
+    spawn1='Teleport spawn "x,y,z" (required)',
+    spawn2='Teleport spawn "x,y,z" (optional)',
+    spawn3='Teleport spawn "x,y,z" (optional)',
+    spawn4='Teleport spawn "x,y,z" (optional)',
+    spawn5='Teleport spawn "x,y,z" (optional)',
+)
+@app_commands.choices(tp_type=TP_TYPE_CHOICES)
+async def tp_set_zone(
+    interaction: discord.Interaction,
+    tp_type: app_commands.Choice[str],
+    slot: int,
+    zone_x: float,
+    zone_y: float,
+    zone_z: float,
+    spawn1: str,
+    spawn2: str | None = None,
+    spawn3: str | None = None,
+    spawn4: str | None = None,
+    spawn5: str | None = None,
+) -> None:
+    # Permission gate
+    if not isinstance(interaction.user, discord.Member) or not _has_ai_control(interaction.user):
+        await interaction.response.send_message("❌ You do not have permission to set TP zones.", ephemeral=True)
+        return
+
+    if slot < 1 or slot > 5:
+        await interaction.response.send_message("❌ Slot must be 1–5.", ephemeral=True)
+        return
+
+    # Normalize spawns: keep only non-empty strings
+    spawns: list[str] = []
+    for s in (spawn1, spawn2, spawn3, spawn4, spawn5):
+        if s is None:
+            continue
+        s2 = str(s).strip()
+        if s2:
+            spawns.append(s2)
+
+    # Import inside handler to avoid circular imports / missing modules during early refactor
+    try:
+        from starz_printpos.tp_zones import upsert_zone_and_save
+    except Exception as e:
+        await interaction.response.send_message(
+            f"❌ Could not import `upsert_zone_and_save` from starz_printpos.tp_zones: {e}",
+            ephemeral=True,
+        )
+        return
+
+    try:
+        # This assumes your canonical function signature supports these fields.
+        # If your signature differs, paste it and I’ll rewrite this file to match EXACTLY.
+        zone = upsert_zone_and_save(
+            tp_type=tp_type.value,
+            slot=int(slot),
+            zone_x=float(zone_x),
+            zone_y=float(zone_y),
+            zone_z=float(zone_z),
+            spawns=spawns,
+        )
+    except TypeError:
+        # Fallback if your function expects positional/other param names.
+        # We still fail cleanly with a useful message.
+        await interaction.response.send_message(
+            "❌ `upsert_zone_and_save(...)` signature mismatch. Paste that function from starz_printpos/tp_zones.py and I’ll match it.",
+            ephemeral=True,
+        )
+        return
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Failed to save zone: {e}", ephemeral=True)
+        return
+
+    # Build a nice confirmation embed
+    embed = discord.Embed(
+        title="✅ TP Zone Saved",
+        description=(
+            f"**Type:** `{tp_type.value}`\n"
+            f"**Slot:** `{slot}`\n"
+            f"**Zone:** `({zone_x:.2f}, {zone_y:.2f}, {zone_z:.2f})`\n"
+            f"**Spawns:** `{len(spawns)}`"
+        ),
+        color=0x2ECC71,
+    )
+    if spawns:
+        embed.add_field(name="Spawn List", value="\n".join(f"• `{s}`" for s in spawns[:5]), inline=False)
+        if len(spawns) > 5:
+            embed.add_field(name="Note", value=f"...and {len(spawns) - 5} more", inline=False)
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+def setup(bot: commands.Bot) -> None:
+    bot.tree.add_command(tp_set_zone)

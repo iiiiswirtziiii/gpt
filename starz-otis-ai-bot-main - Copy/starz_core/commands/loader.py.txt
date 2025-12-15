@@ -1,0 +1,24 @@
+# starz_core/commands/loader.py
+from __future__ import annotations
+from discord import app_commands
+
+
+def load_all_commands(tree: app_commands.CommandTree) -> None:
+    """
+    Register ALL slash commands by system.
+    """
+    from .tps.tp_commands import setup as setup_tps
+    from .nukes.nuke_commands import setup as setup_nukes
+    from .bans.ban_commands import setup as setup_bans
+    from .admin.admin_commands import setup as setup_admin
+    from .tickets.ticket_commands import setup as setup_tickets
+    from .misc.misc_commands import setup as setup_misc
+
+    setup_tps(tree)
+    setup_nukes(tree)
+    setup_bans(tree)
+    setup_admin(tree)
+    setup_tickets(tree)
+    setup_misc(tree)
+
+    print("[STARZ-COMMANDS] All command systems loaded")
